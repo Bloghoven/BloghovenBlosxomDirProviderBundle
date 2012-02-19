@@ -17,9 +17,7 @@
         "pagerfanta/pagerfanta": "master-dev"
     },
     "autoload": {
-        "autoload": {
-            "psr-0": { "Bloghoven\\Bundle\\BlosxomDirProviderBundle": "" }
-        }
+        "psr-0": { "Bloghoven\\Bundle\\BlosxomDirProviderBundle": "" }
     },
 
     "target-dir": "Bloghoven/Bundle/BlosxomDirProviderBundle"

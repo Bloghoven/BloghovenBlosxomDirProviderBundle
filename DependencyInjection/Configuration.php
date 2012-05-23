@@ -22,7 +22,7 @@ class Configuration implements ConfigurationInterface
 
         $rootNode
             ->children()
-                ->scalarNode('data_dir')->defaultValue('%kernel.root_dir%/data')->end()
+                ->scalarNode('filesystem')->defaultValue(null)->end()
                 ->scalarNode('file_extension')->defaultValue('txt')->end()
             ->end()
         ;

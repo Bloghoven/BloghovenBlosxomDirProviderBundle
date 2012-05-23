@@ -6,6 +6,7 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\HttpKernel\DependencyInjection\Extension;
 use Symfony\Component\DependencyInjection\Loader;
+use Symfony\Component\DependencyInjection\Definition;
 
 /**
  * This is the class that loads and manages your bundle configuration
@@ -25,12 +26,21 @@ class BloghovenBlosxomDirProviderExtension extends Extension
         $loader = new Loader\XmlFileLoader($container, new FileLocator(__DIR__.'/../Resources/config'));
         $loader->load('services.xml');
 
-        $this->updateProviderDataDir($container, $config);
+        $this->setAdapter($container, $config);
+        $this->updateProviderFileExtension($container, $config);
     }
 
-    protected function updateProviderDataDir(ContainerBuilder $container, $config)
+    protected function setAdapter(ContainerBuilder $container, $config)
+    {
+        if (isset($config['filesystem']))
+        {
+            $container->setAlias('bloghoven.blosxom_dir_provider.filesystem', $config['filesystem']);
+        }
+    }
+
+    protected function updateProviderFileExtension(ContainerBuilder $container, $config)
     {
         $def = $container->getDefinition('bloghoven.blosxom_dir_provider.content_provider');
-        $def->setArguments(array($config['data_dir'], $config['file_extension']));
+        $def->replaceArgument(1, $config['file_extension']);
     }
 }

@@ -3,12 +3,51 @@
 namespace Bloghoven\Bundle\BlosxomDirProviderBundle\Entity;
 
 use Bloghoven\Bundle\BlogBundle\ContentProvider\Interfaces\ImmutableEntryInterface;
+use Bloghoven\Bundle\BlosxomDirProviderBundle\ContentProvider\BlosxomDirContentProvider;
+
+use Gaufrette\File;
+use Gaufrette\Path;
 
 /**
 * 
 */
-class Entry extends FileBasedEntity implements ImmutableEntryInterface
+class Entry implements ImmutableEntryInterface
 {
+  protected $file;
+  protected $content_provider;
+
+  protected $data_dir;
+  protected $data_dir_info;
+
+  public function __construct(File $file, BlosxomDirContentProvider $content_provider)
+  {
+    $this->file = $file;
+    $this->content_provider = $content_provider;
+  }
+
+  public function getPathname()
+  {
+    return $this->file->getKey();
+  }
+
+  public function getPath()
+  {
+    return pathinfo($this->file->getKey(), PATHINFO_DIRNAME);
+  }
+
+  protected function getParent()
+  {
+    $parent_path = $this->getPath();
+
+    if ($parent_path)
+    {
+      return new Category($parent_path, $this->content_provider);
+    }
+    return null;
+  }
+
+  // ------------------------------------------------------------
+
   // Getting the permalink id is kind of expensive, so
   // we'll cache it.
   protected $permalink_id;
@@ -18,24 +57,21 @@ class Entry extends FileBasedEntity implements ImmutableEntryInterface
   protected $title;
   protected $contents;
 
-  protected function getFileExtension()
-  {
-    return $this->file_info->getExtension();
-  }
-
   public function getPermalinkId()
   {
     if ($this->permalink_id === null)
     {
-      $relative_path = $this->getRelativePath();
-  
-      $base_name = $this->file_info->getBaseName('.'.$this->getFileExtension());
-  
+      $path = $this->getPathname();
+
+      $path_info = pathinfo($path);
+
+      $base_name = $path_info['filename'];
+
       $this->permalink_id = "";
-  
-      if ($relative_path != "")
+
+      if ($this->getPath() != "")
       {
-        $this->permalink_id .= $relative_path.'/';
+        $this->permalink_id .= $this->getPath().'/';
       }
       $this->permalink_id .= $base_name;
     }
@@ -70,27 +106,24 @@ class Entry extends FileBasedEntity implements ImmutableEntryInterface
 
   protected function loadTitleAndContent()
   {
-    $opened_file = $this->file_info->openFile();
+    $content = $this->file->getContent();
 
-    $this->title = trim($opened_file->current());
-    $this->content = "";
-    $opened_file->next();
+    $matches = array();
 
-    while (!$opened_file->eof())
-    {
-      $this->content .= $opened_file->current();
-      $opened_file->next();
-    }
+    preg_match("/(.*?)\n(.*)/ms", $content, $matches);
+
+    $this->title = trim($matches[1]);
+    $this->content = trim($matches[2]);
   }
 
   public function getPostedAt()
   {
-    return \DateTime::createFromFormat('U', $this->file_info->getMTime());
+    return $this->file->getCreated();
   }
 
   public function getModifiedAt()
   {
-    return \DateTime::createFromFormat('U', $this->file_info->getMTime());
+    return $this->file->getCreated();
   }
 
   public function isDraft()

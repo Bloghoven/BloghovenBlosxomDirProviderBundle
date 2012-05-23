@@ -4,41 +4,62 @@ namespace Bloghoven\Bundle\BlosxomDirProviderBundle\Entity;
 
 use Bloghoven\Bundle\BlogBundle\ContentProvider\Interfaces\ImmutableCategoryInterface;
 
+use Bloghoven\Bundle\BlosxomDirProviderBundle\ContentProvider\BlosxomDirContentProvider;
+
 use Symfony\Component\Finder\Finder;
+
+use Gaufrette\Path;
 
 /**
 * 
 */
-class Category extends FileBasedEntity implements ImmutableCategoryInterface
+class Category implements ImmutableCategoryInterface
 {
-  public function getName()
+  protected $path;
+  protected $content_provider;
+
+  public function __construct($path, BlosxomDirContentProvider $content_provider)
   {
-    return $this->file_info->getBasename();
+    $this->path = Path::normalize($path);
+    $this->content_provider = $content_provider;
   }
 
-  public function getPermalinkId()
+  public function getPath()
   {
-    return $this->getRelativePathname();
+    return pathinfo($this->path, PATHINFO_DIRNAME);
+  }
+
+  public function getPathname()
+  {
+    return $this->path;
   }
 
   public function getParent()
   {
-    return parent::getParent();
+    $parent_path = $this->getPath();
+
+    if ($parent_path)
+    {
+      return new Category($parent_path, $this->content_provider);
+    }
+    return null;
+  }
+
+  public function getName()
+  {
+    return pathinfo($this->path, PATHINFO_BASENAME);
+  }
+
+  public function getPermalinkId()
+  {
+    return $this->path;
   }
 
   public function getChildren()
   {
-    $finder = new Finder();
-    
-    $finder
-      ->directories()
-      ->in($this->file_info->getPathname())
-      ->depth('== 0')
-      ->sortByName();
-
     $categories = array();
 
-    foreach ($finder as $dir) 
+    foreach ($this->content_provider->getCategoryPaths($this->getPathname(), 1) as $dir)
     {
       $categories[] = new Category($dir, $this->content_provider);
     }

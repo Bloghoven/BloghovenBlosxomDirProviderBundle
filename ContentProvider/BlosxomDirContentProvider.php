@@ -11,24 +11,26 @@ use Bloghoven\Bundle\BlogBundle\ContentProvider\Interfaces\ImmutableCategoryInte
 use Pagerfanta\Pagerfanta;
 use Pagerfanta\Adapter\ArrayAdapter;
 
-use Symfony\Component\Finder\Finder;
+use Gaufrette\Filesystem;
+use Gaufrette\Path;
+use Gaufrette\StreamWrapper;
 
 class BlosxomDirContentProvider implements ContentProviderInterface
 {
-  protected $datadir;
+  protected $filesystem;
   protected $file_extension;
   protected $depth;
 
-  public function __construct($datadir, $file_extension = 'txt', $depth = 0)
+  public function __construct(Filesystem $filesystem, $file_extension = 'txt', $depth = 0)
   {
-    $this->datadir = $datadir;
+    $this->filesystem = $filesystem;
     $this->file_extension = $file_extension;
     $this->depth = (int)$depth;
   }
 
-  public function getDataDir()
+  public function getFilesystem()
   {
-    return $this->datadir;
+    return $this->filesystem;
   }
 
   protected function validatePermalinkId($permalink_id)
@@ -39,31 +41,68 @@ class BlosxomDirContentProvider implements ContentProviderInterface
     }
   }
 
+  public function getFile($file_key)
+  {
+    $file = $this->filesystem->get($file_key);
+    $file->setCreated(\DateTime::createFromFormat('U', $this->filesystem->mtime($file_key)));
+    return $file;
+  }
+
   /* ------------------ ContentProviderInterface methods ---------------- */
+
+  protected function getSortedEntryKeysInSubdir($subdir = null, $depth = 0)
+  {
+    $extension = $this->file_extension;
+
+    $keys = array_filter($this->filesystem->keys(), function ($key) use ($extension, $depth, $subdir) {
+      $normalized_key = Path::normalize($key);
+
+      if ($subdir)
+      {
+        if (strpos($normalized_key, $subdir.'/') !== 0)
+        {
+          return false;
+        }
+      }
+
+      $path_info = pathinfo($normalized_key);
+
+      if ($path_info['extension'] != $extension)
+      {
+        return false;
+      }
+
+      if ($depth > 0)
+      {
+        $dir_components = explode('/', $path_info['dirname']);
+        if (count($dir_components) != 1 || $dir_components[0] != '.')
+        {
+          if (count($dir_components) > $depth-1)
+          {
+            return false;
+          }
+        }
+      }
+
+      return true;
+    });
+
+    $filesystem = $this->filesystem;
+
+    usort($keys, function ($a, $b) use ($filesystem) {
+      return $filesystem->mtime($b) - $filesystem->mtime($a);
+    });
+
+    return $keys;
+  }
 
   public function getHomeEntriesPager()
   {
-    $finder = new Finder();
-    
-    $finder
-      ->files()
-      ->name('*.'.$this->file_extension)
-      ->in($this->datadir)
-      ->sort(function($file1, $file2)
-      {
-        return $file2->getMTime() - $file1->getMTime();
-      });
-
-    if ($this->depth > 0)
-    {
-      $finder->depth('<= '.($this->depth-1));
-    }
-    
     $entries = array();
 
-    foreach ($finder as $file) 
+    foreach ($this->getSortedEntryKeysInSubdir(null, $this->depth) as $key)
     {
-      $entries[] = new Entry($file, $this);
+      $entries[] = new Entry($this->getFile($key), $this);
     }
 
     return new Pagerfanta(new ArrayAdapter($entries));
@@ -76,42 +115,61 @@ class BlosxomDirContentProvider implements ContentProviderInterface
       throw new \LogicException("The Blosxom dir provider only supports categories from the same provider.");
     }
 
-    $finder = new Finder();
-    
-    $finder
-      ->files()
-      ->name('*.'.$this->file_extension)
-      ->in($category->getAbsolutePath())
-      ->sort(function($file1, $file2)
-      {
-        return $file2->getMTime() - $file1->getMTime();
-      });
-
-    // Depth should perhaps be configurable?
-    
     $entries = array();
 
-    foreach ($finder as $file) 
+    foreach ($this->getSortedEntryKeysInSubdir($category->getPathname()) as $file)
     {
-      $entries[] = new Entry($file, $this);
+      $entries[] = new Entry($this->getFile($file), $this);
     }
 
     return new Pagerfanta(new ArrayAdapter($entries));
   }
 
+  public function getCategoryPaths($subdir = null, $depth = 0)
+  {
+    $keys = array_map(function ($key) use ($subdir) {
+      $normalized_key = Path::normalize($key);
+
+      if ($subdir)
+      {
+        if (strpos($normalized_key, $subdir) !== 0)
+        {
+          return '.';
+        }
+
+        return pathinfo(substr($normalized_key, strlen($subdir)+1), PATHINFO_DIRNAME);
+      }
+
+      return pathinfo($normalized_key, PATHINFO_DIRNAME);
+    }, $this->filesystem->keys());
+
+    $keys = array_unique($keys);
+
+    return array_filter($keys, function ($key) use ($depth)
+    {
+      if ($key == '.')
+      {
+        return false;
+      }
+
+      if ($depth > 0)
+      {
+        $dir_components = explode('/', $key);
+        if (count($dir_components) > $depth)
+        {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }
+
   public function getCategoryRoots()
   {
-    $finder = new Finder();
-    
-    $finder
-      ->directories()
-      ->in($this->datadir)
-      ->depth('== 0')
-      ->sortByName();
-
     $categories = array();
 
-    foreach ($finder as $dir) 
+    foreach ($this->getCategoryPaths(null, 1) as $dir)
     {
       $categories[] = new Category($dir, $this);
     }
@@ -123,24 +181,37 @@ class BlosxomDirContentProvider implements ContentProviderInterface
   {
     $this->validatePermalinkId($permalink_id);
 
-    $file = new \SplFileInfo($this->datadir.'/'.$permalink_id.'.'.$this->file_extension);
+    $key = $permalink_id.'.'.$this->file_extension;
 
-    if ($file->isFile())
+    if ($this->filesystem->has($key))
     {
-      return new Entry($file, $this);
+      return new Entry($this->getFile($key), $this);
     }
     return null;
+  }
+
+  protected function isCategory($path)
+  {
+    foreach ($this->filesystem->keys() as $key)
+    {
+      $normalized_key = Path::normalize($key);
+
+      if (strpos($normalized_key, $path.'/') === 0)
+      {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   public function getCategoryWithPermalinkId($permalink_id)
   {
     $this->validatePermalinkId($permalink_id);
 
-    $dir = new \SplFileInfo($this->datadir.'/'.$permalink_id);
-
-    if ($dir->isDir())
+    if ($this->isCategory($permalink_id))
     {
-      return new Category($dir, $this);
+      return new Category($permalink_id, $this);
     }
     return null;
   }
